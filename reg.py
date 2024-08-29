@@ -193,13 +193,27 @@ def get_applications():
 
     reg = RegistryHive("hives/" + _key.split("\\")[0])
     key = reg.get_key(_key)
+    keys = ["InstallLocation", "InstallDate", "InstallSource", "Publisher", "DisplayVersion", "DisplayName", "URLInfoAbout"]
+    out = {"GUID": [], "Key": [], "Value": []}
+    last_guid = ""
 
     for guid in key.iter_subkeys():
         if re.match(GUID_REGEX, guid.name):
             last_modified = get_utc_time(guid.header.last_modified)
-            
+
             for val in guid.iter_values():
-                print(val.value)
+                if val.name in keys:
+                    out["Key"].append(val.name)
+                    out["Value"].append(val.value)
+
+                    if guid.name == last_guid:
+                        out["GUID"].append("")
+                    else:
+                        out["GUID"].append(guid.name)
+
+                    last_guid = guid.name
+
+    return out
 
 def export(output):
     print("Exporting Data")
