@@ -4,6 +4,7 @@ import pandas as pd
 import re
 
 GUID_REGEX = r"{[0-9A-Z]{8}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{12}}"
+USB_REGEX = r".*?VID_([0-9A-Z]{4})&PID_([0-9A-Z]{4})"
 
 def get_control_set():
     print("Gathering Control Set")
@@ -231,28 +232,87 @@ def get_local_users():
     # Last 12 bytes groups of 4 bytes == Machine ID
 
     # 204 end of fixed header in V
-    rids = []
-    usernames = []
-    logon_counts = []
+    rid = []
+    username = []
+    logon_count = []
+    last_modified = []
     
     for sk in key.iter_subkeys():
         if sk.name == "Names":
             for name in sk.iter_subkeys():
-                usernames.append(name.name)
+                username.append(name.name)
+                lm = get_utc_time(name.header.last_modified)
+                last_modified.append(lm)
 
                 for rid_key in name.iter_values():
-                    rids.append(rid_key.value_type)
+                    rid.append(rid_key.value_type)
         else:
             for val in sk.iter_values():
                 if val.name == "F":
                     ba = bytearray.fromhex(val.value)[66:68]
-                    logon_count = int.from_bytes(ba, 'little')
-                    logon_counts.append(logon_count)
+                    lc = int.from_bytes(ba, 'little')
+
+                    logon_count.append(lc)
 
     return {
-        "RID": rids,
-        "Usernames": usernames,
-        "LogonCount": logon_counts
+        "RID": rid,
+        "Usernames": username,
+        "LogonCount": logon_count,
+        "LastModified": last_modified
+    }
+
+def get_device_volumes():
+    _key = "SOFTWARE\\Microsoft\\Windows Portable Devices\\Devices"
+
+    reg = RegistryHive("hives/SOFTWARE")
+    key = reg.get_key(_key)
+
+    last_modified = []
+    name = []
+    
+    for sk in key.iter_subkeys():
+        lm = get_utc_time(sk.header.last_modified)
+        last_modified.append(lm)
+
+        for val in sk.iter_values():
+            if val.name == "FriendlyName":
+                ids = re.findall(USB_REGEX, sk.header)
+
+                name.append(val.value)
+
+def get_devices(control_set):
+    print("Get Devices")
+
+    key = parse_hive(
+        "SYSTEM\\ControlSet001\\Enum\\USB",
+        control_set
+    )
+
+    vendor_ids = []
+    product_ids = []
+    device_ids = []
+    last_modified = []
+
+    for dev in key.iter_subkeys():
+        lm = get_utc_time(dev.header.last_modified)
+
+        if not dev.name.startswith("ROOT_HUB"):
+            ids = re.findall(USB_REGEX, dev.name)[0]
+
+            vendor_ids.append(ids[0])
+            product_ids.append(ids[1])
+            last_modified.append(lm)
+
+            for val in dev.iter_subkeys():
+                device_ids.append(val.name)
+
+    # get_device_volumes()
+
+    return {
+        "VendorID": vendor_ids,
+        "ProductID": product_ids,
+        "DeviceID": device_ids,
+        "LastModified": last_modified
     }
 
 def export(output):
@@ -285,6 +345,8 @@ if __name__ == "__main__":
     all_data["Windows Defender"] = get_windows_defender()
     all_data["Applications"] = get_applications()
     all_data["Local Users"] = get_local_users()
+    # all_data["USB Devices"] = get_volume_names()
+    all_data["Devices"] = get_devices(control_set)
 
     export(all_data)
 
