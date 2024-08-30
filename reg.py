@@ -1,7 +1,6 @@
 from regipy.registry import RegistryHive
 from regipy import convert_wintime
 import pandas as pd
-import struct
 import re
 
 GUID_REGEX = r"{[0-9A-Z]{8}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{12}}"
@@ -11,7 +10,7 @@ def get_control_set():
 
     _key = "SYSTEM\\Select\\Current"
 
-    reg = RegistryHive("hives/" + _key.split("\\")[0])
+    reg = RegistryHive("hives/SYSTEM")
     cs = reg.get_control_sets(_key)
 
     out = ""
@@ -33,7 +32,7 @@ def get_operating_system():
 
     _key = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion"
 
-    reg = RegistryHive("hives/" + _key.split("\\")[0])
+    reg = RegistryHive("hives/SOFTWARE")
     key = reg.get_key(_key)
 
     out = {"Key": [], "Value": []}
@@ -99,7 +98,7 @@ def get_network_interfaces(control_set):
     )
 
     out = {"GUID": [], "Key": [], "Value": []}
-    keys = ["IPAddress", "SubnetMask", "EnableDHCP", "DhcpIPAddress", "DhcpDefaultGateway", "DhcpSubnetMaskOpt", "DhcpNameServer", "DhcpServer"]
+    keys = ["IPAddress", "SubnetMask", "EnableDHCP", "DhcpIPAddress", "DhcpDefaultGateway", "DhcpSubnetMaskOpt", "DhcpNameServer", "DhcpServer", "LeaseObtainedTime"]
     
     interface_keys = get_network_interface_keys(key)
     last_interface = ""
@@ -133,7 +132,7 @@ def get_network_profiles():
 
     _key = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList\\Profiles"
 
-    reg = RegistryHive("hives/" + _key.split("\\")[0])
+    reg = RegistryHive("hives/SOFTWARE")
     key = reg.get_key(_key)
 
     out = {"GUID": [], "Value": []}
@@ -159,7 +158,7 @@ def get_last_shutdown(control_set):
     _key = "SYSTEM\\CurrentControlSet\\Control\\Windows"
     _key = _key.replace("CurrentControlSet", control_set)
     
-    reg = RegistryHive("hives/" + _key.split("\\")[0])
+    reg = RegistryHive("hives/SYSTEM")
     key = reg.get_key(_key)
 
     last_modified = get_utc_time(key.header.last_modified)
@@ -191,7 +190,7 @@ def get_applications():
 
     _key = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall"
 
-    reg = RegistryHive("hives/" + _key.split("\\")[0])
+    reg = RegistryHive("hives/SOFTWARE")
     key = reg.get_key(_key)
     keys = ["InstallLocation", "InstallDate", "InstallSource", "Publisher", "DisplayVersion", "DisplayName", "URLInfoAbout"]
     out = {"GUID": [], "Key": [], "Value": []}
@@ -213,7 +212,48 @@ def get_applications():
 
                     last_guid = guid.name
 
+            out["Key"].append("LastModified")
+            out["Value"].append(last_modified)
+            out["GUID"].append("")
+
     return out
+
+def get_local_users():
+    print("Gathering Local Users")
+
+    _key = "SAM\\SAM\\Domains\\Account\\Users"
+
+    reg = RegistryHive("hives/SAM")
+    key = reg.get_key(_key)
+
+    # SID-RID
+    # SAM\Domains\Account\V
+    # Last 12 bytes groups of 4 bytes == Machine ID
+
+    # 204 end of fixed header in V
+    rids = []
+    usernames = []
+    logon_counts = []
+    
+    for sk in key.iter_subkeys():
+        if sk.name == "Names":
+            for name in sk.iter_subkeys():
+                usernames.append(name.name)
+
+                for rid_key in name.iter_values():
+                    rids.append(rid_key.value_type)
+        else:
+            for val in sk.iter_values():
+                if val.name == "F":
+                    ba = bytearray.fromhex(val.value)[66:68]
+                    logon_count = int.from_bytes(ba, 'little')
+                    logon_counts.append(logon_count)
+
+    return {
+        "RID": rids,
+        "Usernames": usernames,
+        "LogonCount": logon_counts
+    }
 
 def export(output):
     print("Exporting Data")
@@ -244,6 +284,7 @@ if __name__ == "__main__":
     all_data["Last Shutdown"] = get_last_shutdown(control_set)
     all_data["Windows Defender"] = get_windows_defender()
     all_data["Applications"] = get_applications()
+    all_data["Local Users"] = get_local_users()
 
     export(all_data)
 
